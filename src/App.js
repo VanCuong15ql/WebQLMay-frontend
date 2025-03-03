@@ -3,33 +3,52 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-d
 import axios from "axios";
 import Dashboard from "./pages/Dashboard";
 import ListMayTho from "./components/maytho/ListMayTho";
+import MachineDetails from "./components/maytho/MachineDetails";
+import ListMayCuuSinh from "./components/maycuusinh/ListMayCuuSinh";
+import MayCuuSinhDetails from "./components/maycuusinh/MayCuuSinhDetails";
+import ListmayP34 from "./components/mayP34/ListmayP34";
+import MayP34Details from "./components/mayP34/MayP34Details";
+import Admin from "./pages/Admin";
+import Register from "./pages/Register";
 
 const Login = () => {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
-  
+  const API_URL = process.env.REACT_APP_API_URL;
+
   useEffect(() => {
     if (localStorage.getItem("token")) {
-      window.location.href = "/dashboard"; // Nếu đã đăng nhập, chuyển luôn sang Dashboard
+      const role = localStorage.getItem("role");
+      if (role === "admin") {
+        window.location.href = "/admin";
+      } else if (role === "view" || role === "edit") {
+        window.location.href = "/dashboard";
+      }
     }
   }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      const res = await axios.post("http://localhost:5000/auth/login", {
+      const res = await axios.post(`${API_URL}/auth/login`, {
         username,
         password,
       });
       localStorage.setItem("token", res.data.token);
       localStorage.setItem("username", res.data.username); // Lưu username vào localStorage
-      window.location.href = "/dashboard"; // Chuyển hướng
+      localStorage.setItem("role", res.data.role); // Lưu role vào localStorage
+      if (res.data.role === "admin") {
+        window.location.href = "/admin"; // Chuyển hướng đến trang admin nếu là admin
+      } else if (res.data.role === "view" || res.data.role === "edit") {
+        window.location.href = "/dashboard"; // Chuyển hướng đến trang dashboard nếu không phải admin
+      } else {
+        setMessage("Bạn chưa được cấp quyền đăng nhập");
+      }
     } catch (err) {
       setMessage(err.response?.data?.message || "Lỗi hệ thống");
     }
   };
-  
 
   return (
     <div className="flex justify-center items-center h-screen bg-gray-100">
@@ -57,14 +76,24 @@ const Login = () => {
           </button>
         </form>
         {message && <p className="text-red-500 mt-2">{message}</p>}
+        <p className="mt-4">
+          Chưa có tài khoản? <a href="/register" className="text-blue-500">Đăng ký</a>
+        </p>
       </div>
     </div>
   );
 };
 
 // Kiểm tra nếu chưa đăng nhập, chuyển hướng về Login
-const PrivateRoute = ({ element }) => {
-  return localStorage.getItem("token") ? element : <Navigate to="/" />;
+const PrivateRoute = ({ element, roles }) => {
+  const role = localStorage.getItem("role");
+  if (!localStorage.getItem("token")) {
+    return <Navigate to="/" />;
+  }
+  if (roles && !roles.includes(role)) {
+    return <Navigate to="/dashboard" />;
+  }
+  return element;
 };
 
 const App = () => {
@@ -72,11 +101,16 @@ const App = () => {
     <Router>
       <Routes>
         <Route path="/" element={<Login />} />
+        <Route path="/register" element={<Register />} />
         <Route path="/dashboard" element={<PrivateRoute element={<Dashboard />} />}>
           <Route path="may-tho" element={<ListMayTho />} />
-          <Route path="may-cuu-sinh" element={<h1>Danh sách máy cứu sinh</h1>} />
-          <Route path="may-p34" element={<h1>Danh sách máy P34</h1>} />
+          <Route path="may-tho/:id" element={<MachineDetails />} />
+          <Route path="may-cuu-sinh" element={<ListMayCuuSinh />} />
+          <Route path="may-cuu-sinh/:id" element={<MayCuuSinhDetails />} />
+          <Route path="may-p34" element={<ListmayP34 />} />
+          <Route path="may-p34/:id" element={<MayP34Details />} />
         </Route>
+        <Route path="/admin" element={<PrivateRoute element={<Admin />} roles={['admin']} />} />
       </Routes>
     </Router>
   );
