@@ -8,6 +8,7 @@ import ListMayCuuSinh from "./components/maycuusinh/ListMayCuuSinh";
 import MayCuuSinhDetails from "./components/maycuusinh/MayCuuSinhDetails";
 import ListmayP34 from "./components/mayP34/ListmayP34";
 import MayP34Details from "./components/mayP34/MayP34Details";
+import CategoryDetails from "./components/categories/CategoryDetails";
 import Admin from "./pages/Admin";
 import Register from "./pages/Register";
 
@@ -109,6 +110,7 @@ const App = () => {
           <Route path="may-cuu-sinh/:id" element={<MayCuuSinhDetails />} />
           <Route path="may-p34" element={<ListmayP34 />} />
           <Route path="may-p34/:id" element={<MayP34Details />} />
+          <Route path="categories/:id" element={<CategoryDetails />} />
         </Route>
         <Route path="/admin" element={<PrivateRoute element={<Admin />} roles={['admin']} />} />
       </Routes>
