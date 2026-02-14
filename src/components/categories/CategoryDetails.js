@@ -28,6 +28,7 @@ const CategoryDetails = () => {
   const [newColLabel, setNewColLabel] = useState('');
   const [newColType, setNewColType] = useState('text');
   const [newColDesc, setNewColDesc] = useState('');
+  const [users, setUsers] = useState([]);
 
   const API_BASE = process.env.REACT_APP_API_URL || '';
 
@@ -46,6 +47,7 @@ const CategoryDetails = () => {
     };
     fetchCategory();
     fetchTables();
+    fetchUsers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -78,6 +80,23 @@ const CategoryDetails = () => {
   };
 
   const role = localStorage.getItem('role');
+  const canEdit = role === 'edit' || role === 'admin';
+  const currentUsername = localStorage.getItem('username') || '';
+
+  const fetchUsers = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_BASE}/admin/users`, {
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) }
+      });
+      if (!res.ok) throw new Error('Failed to load users');
+      const data = await res.json();
+      setUsers(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error(err);
+      setUsers([]);
+    }
+  };
 
   const addColumn = () => {
     if (!colLabel.trim()) return;
@@ -163,6 +182,10 @@ const CategoryDetails = () => {
   };
 
   const openEditRow = (table, row) => {
+    if (row.confirmed) {
+      window.alert('Row đã được xác nhận, không thể sửa.');
+      return;
+    }
     setCurrentTableForRow(table);
     setRowValues(row.values || {});
     setEditingRow(row);
@@ -210,6 +233,31 @@ const CategoryDetails = () => {
       setRowsByTable(prev => ({ ...prev, [tableId]: (prev[tableId] || []).filter(r => r._id !== rowId) }));
     } catch (err) {
       window.alert('Lỗi khi xóa row: ' + err.message);
+    }
+  };
+
+  const handleConfirmRow = async (table, row) => {
+    const message = 'sau khi xác nhận thông tin thì không thể hoàn tác, thông tin này sẽ không được chỉnh sửa nữa, tuy nhiên vẫn có thể được xóa bởi quản trị viên, bạn có chắc chắn xác nhận thông tin chứ';
+    if (!window.confirm(message)) return;
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_BASE}/rows/${row._id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({
+          confirmed: true,
+          confirmedBy: currentUsername,
+          confirmedAt: new Date().toISOString()
+        })
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const updated = await res.json();
+      setRowsByTable(prev => ({
+        ...prev,
+        [table._id]: (prev[table._id] || []).map(r => (r._id === updated._id ? updated : r))
+      }));
+    } catch (err) {
+      window.alert('Lỗi khi xác nhận row: ' + err.message);
     }
   };
 
@@ -266,7 +314,9 @@ const CategoryDetails = () => {
                         <button className="px-2 py-1 bg-black text-white rounded text-sm" onClick={() => openAddColumn(t)}>Add coloum</button>
                       </>
                     )}
-                    <button className="text-sm text-gray-600" onClick={() => handleDeleteTable(t._id)}>Delete</button>
+                    {canEdit ? (
+                      <button className="text-sm text-gray-600" onClick={() => handleDeleteTable(t._id)}>Delete</button>
+                    ) : null}
                   </div>
                 </div>
 
@@ -278,7 +328,7 @@ const CategoryDetails = () => {
                         {(t.columns || []).map((c, idx) => (
                           <th key={idx} className="text-left p-2 border">{c.label}</th>
                         ))}
-                        <th className="p-2 border">Actions</th>
+                        <th className="p-2 border whitespace-nowrap w-px">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -287,10 +337,34 @@ const CategoryDetails = () => {
                           {(t.columns || []).map((c, idx) => (
                             <td key={idx} className="p-2 border">{String((row.values || {})[c.label] ?? '')}</td>
                           ))}
-                          <td className="p-2 border">
+                          <td className="p-2 border whitespace-nowrap w-px">
                             <div className="flex gap-2">
-                              <button className="text-sm text-blue-600" onClick={() => openEditRow(t, row)}>Sửa</button>
-                              <button className="text-sm text-red-600" onClick={() => handleDeleteRow(t._id, row._id)}>Xóa</button>
+                              {(() => {
+                                const userColumn = (t.columns || []).find(c => c.type === 'user');
+                                if (!userColumn) return null;
+                                const rowUser = (row.values || {})[userColumn.label] || '';
+                                const canConfirm = !!rowUser && rowUser === currentUsername && !row.confirmed;
+                                const confirmClass = row.confirmed
+                                  ? 'bg-blue-600 text-white'
+                                  : 'bg-white text-blue-600 border border-blue-600';
+                                return (
+                                  <button
+                                    className={`text-sm px-2 py-1 rounded ${confirmClass} ${canConfirm ? '' : 'opacity-50 cursor-not-allowed'}`}
+                                    onClick={() => (canConfirm ? handleConfirmRow(t, row) : null)}
+                                    disabled={!canConfirm}
+                                  >
+                                    Confirm
+                                  </button>
+                                );
+                              })()}
+                              {canEdit ? (
+                                <>
+                                  <button className={`text-sm ${row.confirmed ? 'text-gray-400 cursor-not-allowed' : 'text-blue-600'}`} onClick={() => (row.confirmed ? null : openEditRow(t, row))}>
+                                    Sửa
+                                  </button>
+                                  <button className="text-sm text-red-600" onClick={() => handleDeleteRow(t._id, row._id)}>Xóa</button>
+                                </>
+                              ) : null}
                             </div>
                           </td>
                         </tr>
@@ -322,6 +396,7 @@ const CategoryDetails = () => {
                     <option value="number">number</option>
                     <option value="date">date</option>
                     <option value="boolean">boolean</option>
+                    <option value="user">user</option>
                   </select>
                   <input className="border p-2 rounded flex-1" placeholder="Mô tả" value={colDesc} onChange={e => setColDesc(e.target.value)} />
                   <button className="bg-blue-600 text-white px-3 rounded" onClick={addColumn}>Thêm</button>
@@ -359,6 +434,7 @@ const CategoryDetails = () => {
                 <option value="number">number</option>
                 <option value="date">date</option>
                 <option value="boolean">boolean</option>
+                <option value="user">user</option>
               </select>
               <input className="border p-2 rounded" placeholder="Mô tả (tùy chọn)" value={newColDesc} onChange={e => setNewColDesc(e.target.value)} />
             </div>
@@ -388,6 +464,13 @@ const CategoryDetails = () => {
                       <option value="">(chọn)</option>
                       <option value="true">True</option>
                       <option value="false">False</option>
+                    </select>
+                  ) : c.type === 'user' ? (
+                    <select className="border p-2 rounded w-full" value={rowValues[c.label] || ''} onChange={e => setRowValues(prev => ({ ...prev, [c.label]: e.target.value }))}>
+                      <option value="">(trống)</option>
+                      {users.map(user => (
+                        <option key={user._id} value={user.username}>{user.username}</option>
+                      ))}
                     </select>
                   ) : (
                     <input type="text" className="border p-2 rounded w-full" value={rowValues[c.label] || ''} onChange={e => setRowValues(prev => ({ ...prev, [c.label]: e.target.value }))} />
