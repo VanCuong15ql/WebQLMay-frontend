@@ -8,7 +8,7 @@ import ListMayCuuSinh from "./components/maycuusinh/ListMayCuuSinh";
 import MayCuuSinhDetails from "./components/maycuusinh/MayCuuSinhDetails";
 import ListmayP34 from "./components/mayP34/ListmayP34";
 import MayP34Details from "./components/mayP34/MayP34Details";
-import CategoryDetails from "./components/categories/CategoryDetails";
+import RecordDetails from "./components/records/RecordDetails";
 import Admin from "./pages/Admin";
 import Register from "./pages/Register";
 
@@ -37,6 +37,7 @@ const Login = () => {
         password,
       });
       localStorage.setItem("token", res.data.token);
+      localStorage.setItem("userId", res.data.userId); // Lưu userId vào localStorage
       localStorage.setItem("username", res.data.username); // Lưu username vào localStorage
       localStorage.setItem("role", res.data.role); // Lưu role vào localStorage
       if (res.data.role === "admin") {
@@ -110,7 +111,8 @@ const App = () => {
           <Route path="may-cuu-sinh/:id" element={<MayCuuSinhDetails />} />
           <Route path="may-p34" element={<ListmayP34 />} />
           <Route path="may-p34/:id" element={<MayP34Details />} />
-          <Route path="categories/:id" element={<CategoryDetails />} />
+  
+          <Route path="records/:id" element={<RecordDetails />} />
         </Route>
         <Route path="/admin" element={<PrivateRoute element={<Admin />} roles={['admin']} />} />
       </Routes>
