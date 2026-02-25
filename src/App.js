@@ -11,6 +11,7 @@ import MayP34Details from "./components/mayP34/MayP34Details";
 import RecordDetails from "./components/records/RecordDetails";
 import Admin from "./pages/Admin";
 import Register from "./pages/Register";
+import PrivateUser from "./pages/PrivateUser";
 
 const Login = () => {
   const [username, setUsername] = useState("");
@@ -114,6 +115,7 @@ const App = () => {
   
           <Route path="records/:id" element={<RecordDetails />} />
         </Route>
+        <Route path="/private-user" element={<PrivateRoute element={<PrivateUser />} />} />
         <Route path="/admin" element={<PrivateRoute element={<Admin />} roles={['admin']} />} />
       </Routes>
     </Router>

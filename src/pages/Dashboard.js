@@ -1,7 +1,9 @@
 import { useState, useEffect } from "react";
-import { Link, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import UpdateNotificationModal from "../components/UpdateNotificationModal";
 
 function Dashboard() {
+  const navigate = useNavigate();
   const [user, setUser] = useState("");
   const [rootCategories, setRootCategories] = useState([]);
   const [subcategoriesByParent, setSubcategoriesByParent] = useState({});
@@ -20,21 +22,31 @@ function Dashboard() {
   const [recordTargetCategory, setRecordTargetCategory] = useState(null);
   const [recordName, setRecordName] = useState("");
   const [recordDesc, setRecordDesc] = useState("");
+  const [recordImage, setRecordImage] = useState(null);
   const [activeRecordMenu, setActiveRecordMenu] = useState(null);
   const [showRecordRenameModal, setShowRecordRenameModal] = useState(false);
   const [recordToRename, setRecordToRename] = useState(null);
   const [recordToRenameCategoryId, setRecordToRenameCategoryId] = useState(null);
   const [renameRecordName, setRenameRecordName] = useState("");
   const [renameRecordDesc, setRenameRecordDesc] = useState("");
+  const [renameRecordImage, setRenameRecordImage] = useState(null);
+  const [showUpdateNotification, setShowUpdateNotification] = useState(false);
 
   const API_BASE = process.env.REACT_APP_API_URL || "";
   const role = localStorage.getItem("role");
   const canEdit = role === "edit" || role === "admin";
+  const getAuthHeaders = () => {
+    const token = localStorage.getItem("token");
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  };
 
   useEffect(() => {
     const storedUser = localStorage.getItem("username");
     setUser(storedUser || "Người dùng");
     fetchRootCategories();
+
+    // Hiển thị modal thông báo cập nhật mỗi lần đăng nhập
+    setShowUpdateNotification(true);
   }, []);
 
   useEffect(() => {
@@ -58,7 +70,9 @@ function Dashboard() {
 
   const fetchRootCategories = async () => {
     try {
-      const res = await fetch(`${API_BASE}/categories?parent=null`);
+      const res = await fetch(`${API_BASE}/categories?parent=null`, {
+        headers: { ...getAuthHeaders() }
+      });
       if (!res.ok) throw new Error("Failed to fetch");
       const data = await res.json();
       setRootCategories(data);
@@ -69,7 +83,9 @@ function Dashboard() {
 
   const fetchSubcategories = async (categoryId) => {
     try {
-      const res = await fetch(`${API_BASE}/categories/${categoryId}/subcategories`);
+      const res = await fetch(`${API_BASE}/categories/${categoryId}/subcategories`, {
+        headers: { ...getAuthHeaders() }
+      });
       if (!res.ok) throw new Error("Failed to fetch subcategories");
       const data = await res.json();
       setSubcategoriesByParent((prev) => ({ ...prev, [categoryId]: data }));
@@ -81,7 +97,9 @@ function Dashboard() {
 
   const fetchRecords = async (categoryId) => {
     try {
-      const res = await fetch(`${API_BASE}/categories/${categoryId}/records`);
+      const res = await fetch(`${API_BASE}/categories/${categoryId}/records`, {
+        headers: { ...getAuthHeaders() }
+      });
       if (!res.ok) throw new Error("Failed to fetch records");
       const data = await res.json();
       setRecordsByCategory((prev) => ({ ...prev, [categoryId]: data }));
@@ -125,6 +143,7 @@ function Dashboard() {
     setRecordTargetCategory(category);
     setRecordName("");
     setRecordDesc("");
+    setRecordImage(null);
     setActiveMenu(null);
     setShowRecordModal(true);
   };
@@ -143,7 +162,7 @@ function Dashboard() {
           method: "PUT",
           headers: {
             "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {})
+            ...getAuthHeaders()
           },
           body: JSON.stringify({ name: catName, description: catDesc })
         });
@@ -159,7 +178,7 @@ function Dashboard() {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {})
+            ...getAuthHeaders()
           },
           body: JSON.stringify(payload)
         });
@@ -196,7 +215,10 @@ function Dashboard() {
   const handleDeleteCategory = async (category) => {
     if (!window.confirm("Bạn có chắc muốn xóa category này?")) return;
     try {
-      const res = await fetch(`${API_BASE}/categories/${category._id}`, { method: "DELETE" });
+      const res = await fetch(`${API_BASE}/categories/${category._id}`, {
+        method: "DELETE",
+        headers: { ...getAuthHeaders() }
+      });
       if (!res.ok) throw new Error(await res.text());
       const parentId = category.parent_id && (category.parent_id._id || category.parent_id);
       if (parentId) {
@@ -223,6 +245,7 @@ function Dashboard() {
     setRecordToRenameCategoryId(categoryId);
     setRenameRecordName(record.name || "");
     setRenameRecordDesc(record.description || "");
+    setRenameRecordImage(null);
     setActiveRecordMenu(null);
     setShowRecordRenameModal(true);
   };
@@ -232,13 +255,21 @@ function Dashboard() {
     if (!recordToRename) return;
     try {
       const token = localStorage.getItem("token");
+      
+      const formData = new FormData();
+      formData.append('name', renameRecordName);
+      formData.append('description', renameRecordDesc);
+      formData.append('categories_id', recordToRename.categories_id);
+      if (renameRecordImage) {
+        formData.append('image', renameRecordImage);
+      }
+      
       const res = await fetch(`${API_BASE}/records/${recordToRename._id}`, {
         method: "PUT",
         headers: {
-          "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {})
         },
-        body: JSON.stringify({ name: renameRecordName, description: renameRecordDesc })
+        body: formData
       });
       if (!res.ok) throw new Error(await res.text());
       const updated = await res.json();
@@ -261,6 +292,7 @@ function Dashboard() {
       setRecordToRenameCategoryId(null);
       setRenameRecordName("");
       setRenameRecordDesc("");
+      setRenameRecordImage(null);
     } catch (err) {
       window.alert("Lỗi khi đổi tên record: " + err.message);
     }
@@ -303,17 +335,21 @@ function Dashboard() {
     }
     try {
       const token = localStorage.getItem("token");
+      
+      const formData = new FormData();
+      formData.append('categories_id', recordTargetCategory._id);
+      formData.append('name', recordName);
+      formData.append('description', recordDesc);
+      if (recordImage) {
+        formData.append('image', recordImage);
+      }
+      
       const res = await fetch(`${API_BASE}/records`, {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {})
         },
-        body: JSON.stringify({
-          categories_id: recordTargetCategory._id,
-          name: recordName,
-          description: recordDesc
-        })
+        body: formData
       });
       if (!res.ok) throw new Error(await res.text());
       const created = await res.json();
@@ -325,6 +361,7 @@ function Dashboard() {
       setShowRecordModal(false);
       setRecordName("");
       setRecordDesc("");
+      setRecordImage(null);
     } catch (err) {
       window.alert("Lỗi khi thêm record: " + err.message);
     }
@@ -340,7 +377,7 @@ function Dashboard() {
           <button
             className="w-5 h-5 flex items-center justify-center text-gray-300 hover:text-white"
             onClick={() => toggleExpand(category)}
-            aria-label={isExpanded ? "Collapse" : "Expand"}
+            aria-label={isExpanded ? "Thu gọn" : "Mở rộng"}
             title={isExpanded ? "Đóng" : "Mở"}
           >
             {isExpanded ? "▾" : "▸"}
@@ -360,7 +397,7 @@ function Dashboard() {
                   e.stopPropagation();
                   setActiveMenu(activeMenu === category._id ? null : category._id);
                 }}
-                aria-label="Category actions"
+                aria-label="Hành động danh mục"
               >
                 ⋮
               </button>
@@ -370,7 +407,7 @@ function Dashboard() {
                     className="w-full text-left px-3 py-2 hover:bg-gray-700"
                     onClick={() => openCategoryModal("addSub", category)}
                   >
-                    Thêm category con
+                    Thêm danh mục con
                   </button>
                   <button
                     className="w-full text-left px-3 py-2 hover:bg-gray-700"
@@ -382,7 +419,7 @@ function Dashboard() {
                     className="w-full text-left px-3 py-2 hover:bg-gray-700"
                     onClick={() => openCategoryModal("rename", category)}
                   >
-                    Đổi tên
+                    Sửa
                   </button>
                   <button
                     className="w-full text-left px-3 py-2 hover:bg-gray-700 text-red-400"
@@ -403,12 +440,14 @@ function Dashboard() {
                 className="flex items-center gap-2 text-sm text-gray-200 group"
                 style={{ paddingLeft: 28 + depth * 12 }}
               >
-                <Link
+                <NavLink
                   to={`/dashboard/records/${record._id}`}
-                  className="flex-1 hover:bg-gray-700 px-2 py-1 rounded"
+                  className={({ isActive }) =>
+                    `flex-1 px-2 py-1 rounded ${isActive ? "bg-gray-700" : "hover:bg-gray-700"}`
+                  }
                 >
                   📄 {record.name}
-                </Link>
+                </NavLink>
                 {canEdit && (
                   <div className="relative record-menu-container opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
@@ -418,7 +457,7 @@ function Dashboard() {
                         e.stopPropagation();
                         setActiveRecordMenu(activeRecordMenu === record._id ? null : record._id);
                       }}
-                      aria-label="Record actions"
+                      aria-label="Hành động record"
                     >
                       ⋮
                     </button>
@@ -428,13 +467,13 @@ function Dashboard() {
                           className="w-full text-left px-3 py-2 hover:bg-gray-700"
                           onClick={() => openRecordRenameModal(record, category._id)}
                         >
-                          Đổi tên
+                          Sửa record
                         </button>
                         <button
                           className="w-full text-left px-3 py-2 hover:bg-gray-700 text-red-400"
                           onClick={() => handleDeleteRecord(record, category._id)}
                         >
-                          Xóa
+                          Xóa record
                         </button>
                       </div>
                     )}
@@ -477,9 +516,18 @@ function Dashboard() {
               className="w-full bg-green-600 hover:bg-green-500 px-4 py-2 rounded"
               onClick={() => openCategoryModal("addRoot")}
             >
-              + Thêm category
+              Thêm danh mục
             </button>
+            
+
           )}
+          {/* button chỉnh sửa thông tin cá nhân */}
+          <button
+            className="w-full text-white hover:text-gray-300 px-4 py-2"
+            onClick={() => navigate("/private-user")}
+          >
+            Thông tin cá nhân
+          </button>
 
           <button
             className="w-full bg-white-500 text-white px-4 py-2 rounded"
@@ -501,7 +549,7 @@ function Dashboard() {
               ▶
             </button>
           )}
-          <h1 className="text-2xl font-bold">📋 Dashboard</h1>
+          <h1 className="text-2xl font-bold">📋 Bản ghi</h1>
         </div>
         <Outlet />
       </div>
@@ -558,6 +606,40 @@ function Dashboard() {
                 value={recordDesc}
                 onChange={(e) => setRecordDesc(e.target.value)}
               />
+              <div>
+                <label className="block text-sm font-medium mb-2">Ảnh (tùy chọn)</label>
+                <input
+                  type="file"
+                  id="recordImageInput"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => setRecordImage(e.target.files[0])}
+                />
+                <label 
+                  htmlFor="recordImageInput"
+                  className="block w-full h-40 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-gray-50 transition-colors overflow-hidden"
+                >
+                  {recordImage ? (
+                    <div className="relative w-full h-full">
+                      <img 
+                        src={URL.createObjectURL(recordImage)} 
+                        alt="Xem trước" 
+                        className="w-full h-full object-contain"
+                      />
+                      <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-60 text-white text-xs py-1 px-2 truncate">
+                        {recordImage.name}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                      <svg className="w-12 h-12 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                      <p className="text-sm">Click để chọn ảnh</p>
+                    </div>
+                  )}
+                </label>
+              </div>
             </div>
             <div className="mt-4 flex justify-end space-x-2">
               <button className="px-4 py-2 rounded border" onClick={() => setShowRecordModal(false)}>
@@ -591,6 +673,51 @@ function Dashboard() {
                 value={renameRecordDesc}
                 onChange={(e) => setRenameRecordDesc(e.target.value)}
               />
+              <div>
+                <label className="block text-sm font-medium mb-2">Ảnh mới (tùy chọn)</label>
+                <input
+                  type="file"
+                  id="renameRecordImageInput"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => setRenameRecordImage(e.target.files[0])}
+                />
+                <label 
+                  htmlFor="renameRecordImageInput"
+                  className="block w-full h-40 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-gray-50 transition-colors overflow-hidden"
+                >
+                  {renameRecordImage ? (
+                    <div className="relative w-full h-full">
+                      <img 
+                        src={URL.createObjectURL(renameRecordImage)} 
+                        alt="Xem trước" 
+                        className="w-full h-full object-contain"
+                      />
+                      <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-60 text-white text-xs py-1 px-2 truncate">
+                        {renameRecordImage.name}
+                      </div>
+                    </div>
+                  ) : recordToRename.image_url ? (
+                    <div className="relative w-full h-full">
+                      <img 
+                        src={recordToRename.image_url} 
+                        alt="Hiện tại" 
+                        className="w-full h-full object-contain"
+                      />
+                      <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-60 text-white text-xs py-1 px-2">
+                        Ảnh hiện tại (Click để thay đổi)
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                      <svg className="w-12 h-12 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                      <p className="text-sm">Click để chọn ảnh</p>
+                    </div>
+                  )}
+                </label>
+              </div>
             </div>
             <div className="mt-4 flex justify-end space-x-2">
               <button 
@@ -612,6 +739,12 @@ function Dashboard() {
           </div>
         </div>
       )}
+
+      {/* Update Notification Modal */}
+      <UpdateNotificationModal
+        isOpen={showUpdateNotification}
+        onClose={() => setShowUpdateNotification(false)}
+      />
     </div>
   );
 }

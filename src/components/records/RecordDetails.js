@@ -49,13 +49,23 @@ const RecordDetails = () => {
   const [showTimeFilterModal, setShowTimeFilterModal] = useState(false);
   const [currentTableForTimeFilter, setCurrentTableForTimeFilter] = useState(null);
   const [timeFilterByTable, setTimeFilterByTable] = useState({});
+  const [openColumnDesc, setOpenColumnDesc] = useState({ tableId: null, label: null });
+  const [sumConfigsByTable, setSumConfigsByTable] = useState({});
+  const [showSumConfigModal, setShowSumConfigModal] = useState(false);
+  const [sumConfigDraft, setSumConfigDraft] = useState(null);
 
   const API_BASE = process.env.REACT_APP_API_URL || '';
+  const getAuthHeaders = () => {
+    const token = localStorage.getItem('token');
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  };
 
   useEffect(() => {
     const fetchRecord = async () => {
       try {
-        const res = await fetch(`${API_BASE}/records/${id}`);
+        const res = await fetch(`${API_BASE}/records/${id}`, {
+          headers: { ...getAuthHeaders() }
+        });
         if (!res.ok) throw new Error('Failed to load');
         const data = await res.json();
         setRecord(data);
@@ -73,9 +83,24 @@ const RecordDetails = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (openColumnDesc.tableId && !event.target.closest('.column-desc-trigger')) {
+        setOpenColumnDesc({ tableId: null, label: null });
+      }
+    };
+
+    document.addEventListener('click', handleClickOutside);
+    return () => {
+      document.removeEventListener('click', handleClickOutside);
+    };
+  }, [openColumnDesc]);
+
   const fetchTables = async () => {
     try {
-      const res = await fetch(`${API_BASE}/tables?record=${id}`);
+      const res = await fetch(`${API_BASE}/tables?record=${id}`, {
+        headers: { ...getAuthHeaders() }
+      });
       if (!res.ok) throw new Error('Failed to load tables');
       const data = await res.json();
       setTables(data);
@@ -87,7 +112,9 @@ const RecordDetails = () => {
 
   const fetchRowsForTable = async (tableId) => {
     try {
-      const res = await fetch(`${API_BASE}/rows?table=${tableId}`);
+      const res = await fetch(`${API_BASE}/rows?table=${tableId}`, {
+        headers: { ...getAuthHeaders() }
+      });
       if (!res.ok) throw new Error('Failed to load rows');
       const data = await res.json();
       setRowsByTable((prev) => ({ ...prev, [tableId]: data }));
@@ -114,6 +141,15 @@ const RecordDetails = () => {
       console.error(err);
       setUsers([]);
     }
+  };
+
+  const toggleColumnDesc = (tableId, label) => {
+    setOpenColumnDesc((prev) => {
+      if (prev.tableId === tableId && prev.label === label) {
+        return { tableId: null, label: null };
+      }
+      return { tableId, label };
+    });
   };
 
   const addColumn = () => {
@@ -268,12 +304,33 @@ const RecordDetails = () => {
     setShowAdvancedFeatures(true);
   };
 
+  const openAdvancedFeaturesForTableColumn = (table, column, context = 'view') => {
+    setCurrentColumnForAdvanced({
+      context,
+      column,
+      tableId: table._id,
+      table
+    });
+    setShowAdvancedFeatures(true);
+  };
+
   const openAutoFillConfig = () => {
     if (!currentColumnForAdvanced) return;
     const col = currentColumnForAdvanced.column;
     setAutoFillRules(col.autoFill || {});
     setShowAdvancedFeatures(false);
     setShowAutoFillConfig(true);
+  };
+
+  const openSumConfigModal = () => {
+    if (!currentColumnForAdvanced) return;
+    const draft = getSumConfig(
+      currentColumnForAdvanced.tableId,
+      currentColumnForAdvanced.column.label
+    );
+    setSumConfigDraft({ ...draft });
+    setShowAdvancedFeatures(false);
+    setShowSumConfigModal(true);
   };
 
   const handleSaveAutoFill = () => {
@@ -668,27 +725,142 @@ const RecordDetails = () => {
     }
   };
 
+  const getSumConfig = (tableId, label) => {
+    const tableConfig = sumConfigsByTable[tableId] || {};
+    return tableConfig[label] || { mode: 'all', groupBy: '' };
+  };
+
+  const updateSumConfig = (tableId, label, nextConfig) => {
+    setSumConfigsByTable((prev) => ({
+      ...prev,
+      [tableId]: {
+        ...(prev[tableId] || {}),
+        [label]: nextConfig
+      }
+    }));
+  };
+
+  const parseNumberValue = (value) => {
+    if (value === null || value === undefined || value === '') return 0;
+    const num = Number(String(value).replace(/,/g, ''));
+    return Number.isNaN(num) ? 0 : num;
+  };
+
+  const getGroupLabel = (table, groupBy, rawValue) => {
+    if (rawValue === null || rawValue === undefined || rawValue === '') return '(trống)';
+    const col = (table.columns || []).find((c) => c.label === groupBy);
+    if (!col) return String(rawValue);
+    if (col.type === 'user') {
+      const userId = typeof rawValue === 'object' ? rawValue.userId : rawValue;
+      const user = userId ? getUserById(userId) : null;
+      return user ? user.username : String(userId || '(trống)');
+    }
+    if (col.type === 'boolean') {
+      const val = String(rawValue).toLowerCase();
+      if (val === 'true') return 'Đúng';
+      if (val === 'false') return 'Sai';
+    }
+    if (col.type === 'date') {
+      const date = new Date(rawValue);
+      return Number.isNaN(date.getTime()) ? String(rawValue) : date.toLocaleDateString();
+    }
+    return String(rawValue);
+  };
+
+  const renderTableSums = (table) => {
+    const tableConfig = sumConfigsByTable[table._id] || {};
+    const numberColumns = (table.columns || []).filter(
+      (c) => c.type === 'number' && tableConfig[c.label] && c.label !== 'hiddenColumn'
+    );
+    if (numberColumns.length === 0) return null;
+
+    const rows = getFilteredRows(table._id);
+
+    return (
+      <div className="mt-3 border-t pt-3 text-sm text-gray-700">
+        <div className="font-medium mb-2">Tổng hợp</div>
+        <div className="space-y-2">
+          {numberColumns.map((col) => {
+            const config = tableConfig[col.label];
+            if (config.mode === 'group') {
+              if (!config.groupBy) {
+                return (
+                  <div key={col.label} className="text-xs text-gray-500">
+                    Chưa chọn cột nhóm cho {col.label}
+                  </div>
+                );
+              }
+              const grouped = rows.reduce((acc, row) => {
+                const raw = (row.values || {})[config.groupBy];
+                const key = getGroupLabel(table, config.groupBy, raw);
+                const value = parseNumberValue((row.values || {})[col.label]);
+                acc[key] = (acc[key] || 0) + value;
+                return acc;
+              }, {});
+
+              return (
+                <div key={col.label} className="space-y-1">
+                  <div className="font-medium">Tổng {col.label} theo {config.groupBy}</div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-1">
+                    {Object.keys(grouped).map((groupKey) => (
+                      <div key={groupKey} className="flex justify-between bg-gray-50 px-2 py-1 rounded">
+                        <span className="text-gray-600">{groupKey}</span>
+                        <span className="font-medium">{grouped[groupKey].toLocaleString()}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            }
+
+            const sum = rows.reduce((acc, row) => (
+              acc + parseNumberValue((row.values || {})[col.label])
+            ), 0);
+
+            return (
+              <div key={col.label} className="flex justify-between bg-gray-50 px-2 py-1 rounded">
+                <span className="text-gray-600">Tổng {col.label}</span>
+                <span className="font-medium">{sum.toLocaleString()}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   if (loading) return <div>Đang tải...</div>;
   if (error) return <div className="text-red-500">Lỗi: {error}</div>;
   if (!record) return <div>Không tìm thấy record</div>;
 
   return (
     <div>
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">{record.name}</h2>
-        {canEdit ? (
-          <button className="px-3 py-1 bg-gray-600 text-white rounded" onClick={() => setShowAddTable(true)}>
-            Thêm table
-          </button>
-        ) : null}
-      </div>
-      <p className="mt-2 text-gray-700">{record.description || 'Không có mô tả'}</p>
-      <div className="mt-4">
-        <small className="text-gray-500">Ngày tạo: {new Date(record.createdAt).toLocaleString()}</small>
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1">
+          <h2 className="text-xl font-semibold">{record.name}</h2>
+          <p className="mt-2 text-gray-700">{record.description || 'Không có mô tả'}</p>
+          <div className="mt-4">
+            <small className="text-gray-500">Ngày tạo: {new Date(record.createdAt).toLocaleString()}</small>
+          </div>
+        </div>
+        {record.image_url && (
+          <div className="flex-shrink-0">
+            <img 
+              src={record.image_url} 
+              alt={record.name}
+              className="w-48 h-48 object-cover rounded-lg border shadow-sm"
+            />
+          </div>
+        )}
       </div>
 
       <section className="mt-6">
-        <h3 className="font-semibold mb-3">Bảng</h3>
+        {canEdit ? (
+          <button className="px-3 py-1 bg-gray-600 text-white rounded mb-3" onClick={() => setShowAddTable(true)}>
+            Thêm bảng
+          </button>
+        ) : null}
+        
         {tables.length === 0 ? (
           <div className="text-gray-500">Chưa có bảng nào</div>
         ) : (
@@ -704,7 +876,7 @@ const RecordDetails = () => {
                         className="px-2 py-1 bg-white text-black border border-black rounded text-xs hover:bg-gray-100"
                         title={`Lọc theo thời gian: ${getTimeFilterLabel(timeFilterByTable[t._id] || '3days')}`}
                       >
-                        view
+                        Xem
                       </button>
                       {showTimeFilterModal && currentTableForTimeFilter && currentTableForTimeFilter._id === t._id && (
                         <>
@@ -738,7 +910,7 @@ const RecordDetails = () => {
                               className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50"
                               onClick={() => handleSetTimeFilter(t._id, '3days')}
                             >
-                              3 ngày trước
+                              3 days ago
                             </button>
                           </div>
                         </>
@@ -761,19 +933,19 @@ const RecordDetails = () => {
                                 className="w-full px-3 py-2 text-left text-sm hover:bg-green-50"
                                 onClick={() => handleUpdateTableState('Openning')}
                               >
-                                🟢 Mở (Openning)
+                                🟢Openning
                               </button>
                               <button
                                 className="w-full px-3 py-2 text-left text-sm hover:bg-yellow-50"
                                 onClick={() => handleUpdateTableState('lockedOpen')}
                               >
-                                🟡 Khóa hở (lockedOpen)
+                                🟡Locked Open
                               </button>
                               <button
                                 className="w-full px-3 py-2 text-left text-sm hover:bg-red-50"
                                 onClick={() => handleUpdateTableState('lockedTight')}
                               >
-                                🔴 Khóa chặt (lockedTight)
+                                🔴Locked Tight
                               </button>
                             </div>
                           </>
@@ -794,8 +966,8 @@ const RecordDetails = () => {
                   <div className="flex items-center gap-2">
                     {(role === 'edit' || role === 'admin' || checkCanEditTable(t)) && (
                       <>
-                        <button className="px-2 py-1 bg-black text-white rounded text-sm" onClick={() => openAddRow(t)}>Add row</button>
-                        <button className="px-2 py-1 bg-black text-white rounded text-sm" onClick={() => openEditTable(t)}>Edit table</button>
+                        <button className="px-2 py-1 bg-black text-white rounded text-sm" onClick={() => openAddRow(t)}>Thêm dòng</button>
+                        <button className="px-2 py-1 bg-black text-white rounded text-sm" onClick={() => openEditTable(t)}>Chỉnh sửa bảng</button>
                       </>
                     )}
                     {canEdit ? (
@@ -809,9 +981,25 @@ const RecordDetails = () => {
                     <thead>
                       <tr className="bg-gray-100">
                         {(t.columns || []).map((c, idx) => (
-                          <th key={idx} className="text-left p-2 border">{c.label}</th>
+                          <th key={idx} className="text-left p-2 border align-top relative">
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                className="column-desc-trigger flex-1 text-left font-medium hover:text-gray-800"
+                                onClick={() => toggleColumnDesc(t._id, c.label)}
+                              >
+                                <span>{c.label}</span>
+                              </button>
+                              
+                            </div>
+                            {openColumnDesc.tableId === t._id && openColumnDesc.label === c.label && (
+                              <div className="column-desc-trigger absolute left-2 top-full mt-1 z-20 w-60 text-xs text-gray-700 bg-white border border-gray-200 rounded shadow-lg p-2">
+                                {c.description || 'Không có mô tả'}
+                              </div>
+                            )}
+                          </th>
                         ))}
-                        <th className="p-2 border whitespace-nowrap w-px">Actions</th>
+                        <th className="p-2 border whitespace-nowrap w-px">Thao tác</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -841,7 +1029,7 @@ const RecordDetails = () => {
                                       onClick={() => (canConfirmCell ? handleConfirmCell(t, row, c.label) : null)}
                                       disabled={!canConfirmCell}
                                     >
-                                      {isConfirmed ? 'Confirmed' : 'Confirm'}
+                                      {isConfirmed ? 'Đã xác nhận' : 'Xác nhận'}
                                     </button>
                                   </div>
                                   {cellConfirmedAt ? (
@@ -884,6 +1072,7 @@ const RecordDetails = () => {
                     </tbody>
                   </table>
                 </div>
+                {renderTableSums(t)}
               </div>
             ))}
           </div>
@@ -902,7 +1091,7 @@ const RecordDetails = () => {
               <div className="border p-3 rounded">
                 <div className="font-medium mb-2">Cột</div>
                 <div className="flex gap-2 mb-2">
-                  <input className="border p-2 rounded flex-1" placeholder="Label" value={colLabel} onChange={(e) => setColLabel(e.target.value)} />
+                  <input className="border p-2 rounded flex-1" placeholder="Nhãn" value={colLabel} onChange={(e) => setColLabel(e.target.value)} />
                   <select className="border p-2 rounded" value={colType} onChange={(e) => setColType(e.target.value)}>
                     <option value="text">text</option>
                     <option value="number">number</option>
@@ -921,7 +1110,7 @@ const RecordDetails = () => {
                       ⚙️
                     </button>
                   )}
-                  <button className="bg-blue-600 text-white px-3 rounded" onClick={addColumn}>Add</button>
+                  <button className="bg-blue-600 text-white px-3 rounded" onClick={addColumn}>Thêm</button>
                 </div>
                 <div className="space-y-2">
                   {columns.map((c, idx) => (
@@ -930,7 +1119,7 @@ const RecordDetails = () => {
                         <div className="font-medium">{c.label} <span className="text-sm text-gray-500">({c.type})</span></div>
                         <div className="text-sm text-gray-600">{c.description}</div>
                         {c.type === 'selection' && c.options && (
-                          <div className="text-xs text-purple-600 mt-1">Options: {c.options.join(', ')}</div>
+                          <div className="text-xs text-purple-600 mt-1">Lựa chọn: {c.options.join(', ')}</div>
                         )}
                         {c.type === 'selection' && c.autoFill && Object.keys(c.autoFill).length > 0 && (
                           <div className="text-xs text-green-600 mt-1">✓ Auto-fill được cấu hình</div>
@@ -1032,6 +1221,15 @@ const RecordDetails = () => {
                           🔧
                         </button>
                       )}
+                      {col.type === 'number' && currentTableForEdit && (
+                        <button 
+                          className="px-3 py-2 bg-black text-white rounded text-sm hover:bg-gray-800"
+                          onClick={() => openAdvancedFeaturesForTableColumn(currentTableForEdit, col, 'table-edit')}
+                          title="Chức năng mở rộng"
+                        >
+                          🔧
+                        </button>
+                      )}
                       <button 
                         className="px-3 py-2 text-red-500 hover:text-red-700"
                         onClick={() => handleRemoveColumnFromEdit(idx)}
@@ -1042,7 +1240,7 @@ const RecordDetails = () => {
                     </div>
                     {col.type === 'selection' && col.options && col.options.length > 0 && (
                       <div className="mt-2 text-xs text-purple-600">
-                        Options: {col.options.join(', ')}
+                        Lựa chọn: {col.options.join(', ')}
                       </div>
                     )}
                     {col.type === 'selection' && col.autoFill && Object.keys(col.autoFill).length > 0 && (
@@ -1102,7 +1300,7 @@ const RecordDetails = () => {
               </div>
               {newColType === 'selection' && newColOptions.length > 0 && (
                 <div className="mt-2 text-xs text-purple-600">
-                  Options: {newColOptions.join(', ')}
+                  Lựa chọn: {newColOptions.join(', ')}
                 </div>
               )}
             </div>
@@ -1145,8 +1343,8 @@ const RecordDetails = () => {
                   ) : c.type === 'boolean' ? (
                     <select className="border p-2 rounded w-full" value={rowValues[c.label] || ''} onChange={e => setRowValues(prev => ({ ...prev, [c.label]: e.target.value }))}>
                       <option value="">(chọn)</option>
-                      <option value="true">True</option>
-                      <option value="false">False</option>
+                      <option value="true">Đúng</option>
+                      <option value="false">Sai</option>
                     </select>
                   ) : c.type === 'user' ? (
                     <select
@@ -1250,7 +1448,7 @@ const RecordDetails = () => {
                 </div>
               ) : (
                 <p className="text-gray-500 text-sm">
-                  {searchUserInput ? 'Không tìm thấy user phù hợp' : 'Nhập tên user để tìm kiếm'}
+                  {searchUserInput ? 'Không tìm thấy người dùng phù hợp' : 'Nhập tên người dùng để tìm kiếm'}
                 </p>
               )}
             </div>
@@ -1347,16 +1545,35 @@ const RecordDetails = () => {
             </p>
             
             <div className="space-y-2">
-              <button
-                className="w-full text-left px-4 py-3 border rounded hover:bg-gray-50 flex items-center justify-between"
-                onClick={openAutoFillConfig}
-              >
-                <div>
-                  <div className="font-medium">Tự động điền thông tin</div>
-                  <div className="text-sm text-gray-500">Tự động điền các cột khác khi chọn giá trị</div>
+              {currentColumnForAdvanced.column.type === 'selection' && (
+                <button
+                  className="w-full text-left px-4 py-3 border rounded hover:bg-gray-50 flex items-center justify-between"
+                  onClick={openAutoFillConfig}
+                >
+                  <div>
+                    <div className="font-medium">Tự động điền thông tin</div>
+                    <div className="text-sm text-gray-500">Tự động điền các cột khác khi chọn giá trị</div>
+                  </div>
+                  <span className="text-xl">→</span>
+                </button>
+              )}
+              {currentColumnForAdvanced.column.type === 'number' && ['view', 'table-edit'].includes(currentColumnForAdvanced.context) && (
+                <button
+                  className="w-full text-left px-4 py-3 border rounded hover:bg-gray-50 flex items-center justify-between"
+                  onClick={openSumConfigModal}
+                >
+                  <div>
+                    <div className="font-medium">Tính tổng các hàng</div>
+                    <div className="text-sm text-gray-500">Chọn tổng toàn bộ hoặc tổng theo nhóm</div>
+                  </div>
+                  <span className="text-xl">→</span>
+                </button>
+              )}
+              {currentColumnForAdvanced.column.type === 'number' && !['view', 'table-edit'].includes(currentColumnForAdvanced.context) && (
+                <div className="text-sm text-gray-500">
+                  Tính tổng chỉ khả dụng khi xem bảng.
                 </div>
-                <span className="text-xl">→</span>
-              </button>
+              )}
             </div>
 
             <div className="mt-4 flex justify-end">
@@ -1422,8 +1639,8 @@ const RecordDetails = () => {
                                 onChange={(e) => handleAutoFillRuleChange(option, col.label, e.target.value)}
                               >
                                 <option value="">(không điền)</option>
-                                <option value="true">True</option>
-                                <option value="false">False</option>
+                                <option value="true">Đúng</option>
+                                <option value="false">Sai</option>
                               </select>
                             ) : col.type === 'date' ? (
                               <input
@@ -1474,6 +1691,100 @@ const RecordDetails = () => {
               <button
                 className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700"
                 onClick={handleSaveAutoFill}
+              >
+                Lưu cấu hình
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Sum Configuration Modal */}
+      {showSumConfigModal && currentColumnForAdvanced && (
+        <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50">
+          <div className="bg-white rounded p-6 w-full max-w-md">
+            <h3 className="text-lg font-semibold mb-4">Tính tổng các hàng</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Cột: <span className="font-medium">{currentColumnForAdvanced.column.label}</span>
+            </p>
+
+            <div className="space-y-2 text-sm">
+              <label className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  name={`sum-${currentColumnForAdvanced.tableId}-${currentColumnForAdvanced.column.label}`}
+                  checked={(sumConfigDraft || {}).mode === 'all'}
+                  onChange={() =>
+                    setSumConfigDraft((prev) => ({
+                      ...(prev || { mode: 'all', groupBy: '' }),
+                      mode: 'all',
+                      groupBy: ''
+                    }))
+                  }
+                />
+                Tổng toàn bộ hàng
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  name={`sum-${currentColumnForAdvanced.tableId}-${currentColumnForAdvanced.column.label}`}
+                  checked={(sumConfigDraft || {}).mode === 'group'}
+                  onChange={() =>
+                    setSumConfigDraft((prev) => ({
+                      ...(prev || { mode: 'group', groupBy: '' }),
+                      mode: 'group'
+                    }))
+                  }
+                />
+                Tổng theo nhóm
+              </label>
+              {(sumConfigDraft || {}).mode === 'group' && (
+                <select
+                  className="w-full border p-2 rounded text-sm"
+                  value={(sumConfigDraft || {}).groupBy || ''}
+                  onChange={(e) =>
+                    setSumConfigDraft((prev) => ({
+                      ...(prev || { mode: 'group', groupBy: '' }),
+                      groupBy: e.target.value
+                    }))
+                  }
+                >
+                  <option value="">Chọn cột nhóm</option>
+                  {(currentColumnForAdvanced.table?.columns || [])
+                    .filter((col) => col.label !== currentColumnForAdvanced.column.label)
+                    .map((col) => (
+                      <option key={col.label} value={col.label}>
+                        {col.label}
+                      </option>
+                    ))}
+                </select>
+              )}
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                className="px-4 py-2 rounded border hover:bg-gray-100"
+                onClick={() => {
+                  setShowSumConfigModal(false);
+                  setCurrentColumnForAdvanced(null);
+                  setSumConfigDraft(null);
+                }}
+              >
+                Hủy
+              </button>
+              <button
+                className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700"
+                onClick={() => {
+                  if (!currentColumnForAdvanced || !sumConfigDraft) return;
+                  updateSumConfig(
+                    currentColumnForAdvanced.tableId,
+                    currentColumnForAdvanced.column.label,
+                    sumConfigDraft
+                  );
+                  setShowSumConfigModal(false);
+                  setCurrentColumnForAdvanced(null);
+                  setSumConfigDraft(null);
+                }}
               >
                 Lưu cấu hình
               </button>
